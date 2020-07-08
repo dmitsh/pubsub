@@ -15,6 +15,7 @@ type Server struct {
 	port     int
 	upgrader *websocket.Upgrader
 	conns    map[*websocket.Conn]*sync.WaitGroup
+	mutex    sync.Mutex
 }
 
 // NewServer instantiates the server
@@ -45,12 +46,16 @@ func (srv *Server) publishEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Broadcasting %q", string(body))
+
+	srv.mutex.Lock()
 	for ws, wg := range srv.conns {
 		if err := ws.WriteMessage(1, body); err != nil {
 			log.Println(err)
 			wg.Done()
+			delete(srv.conns, ws)
 		}
 	}
+	srv.mutex.Unlock()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -63,10 +68,11 @@ func (srv *Server) subscribeEndpoint(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Println("Registered client")
+	log.Printf("Registered client %s", ws.RemoteAddr().String())
 	var wg sync.WaitGroup
 	wg.Add(1)
+	srv.mutex.Lock()
 	srv.conns[ws] = &wg
-	defer delete(srv.conns, ws)
+	srv.mutex.Unlock()
 	wg.Wait()
 }
